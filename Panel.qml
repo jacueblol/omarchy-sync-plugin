@@ -4,7 +4,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// Sync panel: owns the sync state, runs the plugin-sync helper, and keeps
+// Sync panel: owns the sync state, runs the omarchy-sync helper, and keeps
 // the bar icon (BarWidget.qml) informed through syncState/busy/headline.
 //
 // Three views share the panel: the sync overview, a confirmation that lists
@@ -13,7 +13,7 @@ import qs.Ui
 // them and never passes them along.
 Panel {
   id: root
-  moduleName: "io.github.jacueblol.plugin-sync"
+  moduleName: "io.github.jacueblol.omarchy-sync"
   manageIpc: false
 
   property var anchorItem: null
@@ -25,14 +25,14 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color urgentColor: bar ? bar.urgent : Color.urgent
 
-  readonly property string helper: String(Qt.resolvedUrl("plugin-sync")).replace(/^file:\/\//, "")
+  readonly property string helper: String(Qt.resolvedUrl("omarchy-sync")).replace(/^file:\/\//, "")
 
   // ---- Settings (defaults match manifest.json and the helper).
   readonly property string mode: String(setting("mode", "Push automatically"))
   readonly property int intervalMinutes: Math.max(5, Number(setting("intervalMinutes", 15)) || 15)
   readonly property var localOnly: String(setting("localOnly", "")).split(/[\s,]+/).filter(function(s) { return s !== "" })
 
-  property var status: ({ configured: false, state: "loading", plugins: [], unsyncable: [] })
+  property var status: ({ configured: false, state: "loading", plugins: [], files: [], unsyncable: [] })
   property string busy: ""          // "push" | "pull" | "auto" while running
   property string message: ""
   property string view: "main"      // "main" | "confirm" | "settings"
@@ -58,9 +58,19 @@ Panel {
     machine: "this machine only",
     off: "not synced"
   })
-  readonly property var plan: status.pullPlan || ({ install: [], remove: [], bar: false, pluginStates: false, other: false })
+  readonly property var fileStatusText: ({
+    synced: "synced",
+    local: "changed here",
+    remote: "to pull",
+    both: "changed on both"
+  })
+  readonly property var plan: status.pullPlan || ({ install: [], remove: [], bar: false, pluginStates: false, other: false, files: [] })
   readonly property var planLines: {
     var lines = []
+    ;(plan.files || []).forEach(function(f) {
+      lines.push((f.created ? "Create " : "Replace ") + f.label.charAt(0).toLowerCase() + f.label.slice(1)
+        + (f.label === f.path ? "" : " (" + f.path + ")") + "  +" + f.added + " −" + f.removed)
+    })
     if (plan.install.length) lines.push("Install " + plan.install.join(", "))
     if (plan.remove.length) lines.push("Remove " + plan.remove.join(", "))
     if (plan.bar) lines.push("Replace the bar layout and widget settings")
@@ -74,6 +84,10 @@ Panel {
     if (s.plugins !== false) parts.push("plugins")
     if (s.bar !== false) parts.push("bar")
     if (s.other === true) parts.push("shell settings")
+    if (setting("syncKeybindings", true) === true) parts.push("keybindings")
+    if (setting("syncInput", false) === true) parts.push("input")
+    var extra = String(setting("extraFiles", "")).split(/[\s,]+/).filter(function(x) { return x !== "" }).length
+    if (extra) parts.push(extra + (extra === 1 ? " file" : " files"))
     return (parts.length ? "Syncs " + parts.join(", ") : "Syncs nothing") + " · " + mode
   }
 
@@ -162,10 +176,10 @@ Panel {
         try {
           root.status = JSON.parse(text)
         } catch (e) {
-          root.status = { configured: true, state: "error", error: "Could not read sync status", plugins: [], unsyncable: [] }
+          root.status = { configured: true, state: "error", error: "Could not read sync status", plugins: [], files: [], unsyncable: [] }
         }
-        // Plugins installed or removed through Omaplug (or a bar change)
-        // show up here as local changes. Pushing only touches the repo.
+        // Plugins installed or removed through Omaplug, bar changes, and
+        // edits to synced files show up here as local changes. Pushing only touches the repo.
         if (root.mode !== "Manual" && root.syncState === "local") root.runAction("push")
       }
     }
@@ -251,7 +265,7 @@ Panel {
             spacing: Style.space(4)
 
             Text {
-              text: root.view === "settings" ? "Plugin Sync · Settings" : "Plugin Sync"
+              text: root.view === "settings" ? "Omarchy Sync · Settings" : "Omarchy Sync"
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
@@ -335,7 +349,7 @@ Panel {
               iconText: "󰕒"
               iconSize: Style.font.title
               text: "Push"
-              tooltipText: "Share this machine's plugins and settings (p)"
+              tooltipText: "Share this machine's plugins, settings, and files (p)"
               fontSize: Style.font.bodySmall
               foreground: root.foreground
               fontFamily: root.fontFamily
@@ -383,6 +397,46 @@ Panel {
             font.bold: true
             font.letterSpacing: 1.2
           }
+
+          Repeater {
+            model: root.status.files || []
+
+            Item {
+              required property var modelData
+              readonly property bool pending: modelData.status !== "synced"
+              width: parent.width
+              implicitHeight: Math.max(fileName.implicitHeight, filePill.implicitHeight)
+
+              Text {
+                id: fileName
+                anchors.left: parent.left
+                anchors.right: filePill.left
+                anchors.rightMargin: Style.space(8)
+                anchors.verticalCenter: parent.verticalCenter
+                textFormat: Text.PlainText
+                text: modelData.label
+                color: root.foreground
+                opacity: parent.pending ? 1 : 0.85
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                elide: Text.ElideRight
+              }
+
+              Text {
+                id: filePill
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                textFormat: Text.PlainText
+                text: root.fileStatusText[modelData.status] || modelData.status
+                color: modelData.status === "both" ? root.urgentColor : parent.pending ? Color.accent : root.foreground
+                opacity: parent.pending ? 1 : 0.45
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+          }
+
+          PanelSeparator { visible: (root.status.files || []).length > 0; foreground: root.foreground }
 
           Repeater {
             model: root.status.plugins || []
@@ -485,7 +539,7 @@ Panel {
             textFormat: Text.PlainText
             text: root.confirmAction === "pull"
               ? (root.syncState === "both" ? "This machine's unsynced changes to those parts will be lost. " : "")
-                + "shell.json is backed up first. Machine-specific plugins are never touched."
+                + "shell.json and replaced files are backed up first, and files are put back if Hyprland reports errors. Machine-specific plugins are never touched."
               : "Their changes stay in the repo's history."
             color: root.foreground
             opacity: 0.6
@@ -541,6 +595,8 @@ Panel {
               { key: "removePlugins", label: "Remove plugins removed elsewhere", hint: "Never removes plugins with local changes", fallback: true },
               { key: "syncBar", label: "Bar layout", hint: "Widget order, bar position, widget settings", fallback: true },
               { key: "syncShellSettings", label: "Other shell settings", hint: "Idle, lock, and the rest of shell.json", fallback: false },
+              { key: "syncKeybindings", label: "Keybindings", hint: "hypr/bindings.lua", fallback: true },
+              { key: "syncInput", label: "Mouse and keyboard input", hint: "hypr/input.lua: sensitivity, scrolling, layout", fallback: false },
               { key: "notify", label: "Notify after automatic pulls", hint: "", fallback: true }
             ]
 
@@ -588,6 +644,29 @@ Panel {
                 onToggled: root.saveSetting(toggleRow.modelData.key, !toggleRow.checked)
               }
             }
+          }
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "Clock format and other widget settings sync with the bar layout. For tweaks that stay on this machine, use hypr/bindings.local.lua and hypr/input.local.lua."
+            color: root.foreground
+            opacity: 0.5
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          PanelSectionHeader { text: "Other files"; foreground: root.foreground; fontFamily: root.fontFamily }
+
+          TextField {
+            width: parent.width
+            text: String(root.setting("extraFiles", ""))
+            placeholderText: "Paths under ~/.config, e.g. hypr/looknfeel.lua, starship.toml"
+            foreground: root.foreground
+            accent: Color.accent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            onEditingFinished: if (text.trim() !== String(root.setting("extraFiles", ""))) root.saveSetting("extraFiles", text.trim())
           }
 
           PanelSectionHeader { text: "When to sync"; foreground: root.foreground; fontFamily: root.fontFamily }

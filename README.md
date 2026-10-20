@@ -1,9 +1,15 @@
-# Plugin Sync
+# Omarchy Sync
 
-Keep your Omarchy plugins and bar layout the same on every machine. Plugin
-Sync records which plugins you have installed and how your bar is arranged in
-a private git repo you own. Your other machines read that repo and install,
-remove, and arrange their plugins to match.
+Keep your Omarchy plugins, bar layout, keybindings, and mouse settings the
+same on every machine. Omarchy Sync records which plugins you have installed,
+how your bar is arranged, and the config files you choose in a private git
+repo you own. Your other machines read that repo and install, remove, and
+arrange their plugins and update their config to match.
+
+Omarchy Sync was called Plugin Sync before 2.0. To switch, install Omarchy
+Sync, enter the same sync repo in its settings, then run
+`omarchy plugin remove io.github.jacueblol.plugin-sync`. It picks up Plugin
+Sync's local state, so it carries on from the last sync.
 
 Each machine chooses what it syncs and when. Nothing changes on a machine
 without your say-so: by default a machine only shares its own changes, and
@@ -15,7 +21,7 @@ update, or remove plugins and arrange the bar in Omaplug as usual, and Plugin
 Sync notices and shares the change. After a pull, Omaplug's list refreshes on
 its own.
 
-![Plugin Sync panel](preview.png)
+![Omarchy Sync panel](preview.png)
 
 ## Install
 
@@ -66,11 +72,11 @@ push or pull.
 From a terminal or a keybinding:
 
 ```sh
-omarchy-shell shell toggle io.github.jacueblol.plugin-sync
-omarchy-shell io.github.jacueblol.plugin-sync settings
-omarchy-shell io.github.jacueblol.plugin-sync sync    # does what the Automatic sync setting allows
-omarchy-shell io.github.jacueblol.plugin-sync push
-omarchy-shell io.github.jacueblol.plugin-sync pull    # applies without the confirmation step
+omarchy-shell shell toggle io.github.jacueblol.omarchy-sync
+omarchy-shell io.github.jacueblol.omarchy-sync settings
+omarchy-shell io.github.jacueblol.omarchy-sync sync    # does what the Automatic sync setting allows
+omarchy-shell io.github.jacueblol.omarchy-sync push
+omarchy-shell io.github.jacueblol.omarchy-sync pull    # applies without the confirmation step
 ```
 
 ## Configure
@@ -85,6 +91,9 @@ can sync different things.
 | Remove plugins removed elsewhere | on | Let a pull remove plugins the repo no longer lists. Plugins with uncommitted local changes are never removed |
 | Bar layout | on | Widget order, bar position, and widget settings |
 | Other shell settings | off | Everything else in `shell.json`, such as idle and lock timers |
+| Keybindings | on | `~/.config/hypr/bindings.lua` |
+| Mouse and keyboard input | off | `~/.config/hypr/input.lua`: sensitivity, acceleration, scrolling, keyboard layout. Off by default because laptops and desktops usually want different values |
+| Other files | none | Comma-separated paths under `~/.config`, such as `hypr/looknfeel.lua, starship.toml` |
 | Notify after automatic pulls | on | Desktop notification when a pull ran on its own |
 | Automatic sync | Push automatically | **Manual**: only shows the state. **Push automatically**: shares this machine's changes, but other machines' changes wait for your Pull. **Push and pull automatically**: also applies other machines' changes without asking |
 | When both machines changed | Ask | **Ask**, **Keep this machine** (push), or **Use the repo** (pull, only in Push and pull mode) |
@@ -98,10 +107,10 @@ sync shell settings never overwrites the desktop's.
 The same settings can be scripted:
 
 ```sh
-omarchy bar set io.github.jacueblol.plugin-sync mode "Push and pull automatically"
-omarchy bar set io.github.jacueblol.plugin-sync syncShellSettings true --json
-omarchy bar set io.github.jacueblol.plugin-sync localOnly "omarchy.battery,acme.vpn"
-omarchy bar move io.github.jacueblol.plugin-sync --section right
+omarchy bar set io.github.jacueblol.omarchy-sync mode "Push and pull automatically"
+omarchy bar set io.github.jacueblol.omarchy-sync syncShellSettings true --json
+omarchy bar set io.github.jacueblol.omarchy-sync localOnly "omarchy.battery,acme.vpn"
+omarchy bar move io.github.jacueblol.omarchy-sync --section right
 ```
 
 ## What gets synced
@@ -112,23 +121,48 @@ omarchy bar move io.github.jacueblol.plugin-sync --section right
   Plugins without a git origin (hand-made or symlinked development plugins)
   are left alone and listed as not synced.
 - **shell.json**: the parts each machine chooses to sync. A pull backs up the
-  old file to `shell.json.bak.<timestamp>` before changing it.
+  old file to `shell.json.bak.<timestamp>` before changing it. Widget
+  settings, such as the clock's 12- or 24-hour format, sync with the bar
+  layout.
+- **files/**: keybindings, input settings, and any other files you list, as
+  whole files. A pull backs up each file it replaces to
+  `~/.local/state/omarchy-sync/backups/` (the 20 most recent pulls are kept).
+  When a pull changes files under `hypr/`, it reloads Hyprland, and if that
+  brings new config errors it puts every file back and stops before changing
+  anything else. A sync never deletes a file: a machine without the file just
+  doesn't share it.
+
+### Settings for one machine only
+
+Settings that should differ between machines, such as mouse sensitivity on a
+laptop touchpad, go in `~/.config/hypr/input.local.lua` or
+`~/.config/hypr/bindings.local.lua`. These are never synced. Load them by
+ending the synced file with:
+
+```lua
+do local path = os.getenv("HOME") .. "/.config/hypr/input.local.lua"; local file = io.open(path, "r"); if file then file:close(); dofile(path) end end
+```
+
+Because that line is part of the synced file, your other machines get it
+too. The local file loads last, so its settings win. To replace a synced
+binding there, `hl.unbind` it first.
 
 Plugin versions are not pinned. Each machine updates plugins on its own,
 through Omaplug or `omarchy plugin update`.
 
 ## Security
 
-Plugins run unsandboxed, and a pull installs the plugins the sync repo lists.
-Keep the repo private, and only give yourself write access. With the default
-settings, every pull shows that list first and waits for you.
+Plugins run unsandboxed, a pull installs the plugins the sync repo lists, and
+Hyprland runs synced `.lua` files as code. Keep the repo private, and only
+give yourself write access. With the default settings, every pull shows what
+it will change first and waits for you.
 
-No sudo or pkexec is required. Plugin Sync runs `git`, `jq`, `flock`,
-`notify-send`, `gh` (only when creating the repo during setup), the
-`omarchy plugin` and `omarchy bar` commands, and `omarchy-shell` IPC. It
-writes only to `~/.config/omarchy/shell.json` (on a pull, after a backup),
-`~/.config/omarchy/plugins/` (through `omarchy plugin`), and its own state in
-`~/.local/state/omarchy-plugin-sync/`.
+No sudo or pkexec is required. Omarchy Sync runs `git`, `jq`, `flock`,
+`notify-send`, `gh` (only when creating the repo during setup), `hyprctl`,
+the `omarchy plugin` and `omarchy bar` commands, and `omarchy-shell` IPC. It
+writes only to `~/.config/omarchy/shell.json` and the files you chose to sync
+(on a pull, after a backup), `~/.config/omarchy/plugins/` (through `omarchy
+plugin`), and its own state in `~/.local/state/omarchy-sync/`.
 
 ## Dependencies
 
@@ -149,11 +183,11 @@ Without it, create the repo yourself and enter its SSH URL under
 ## Remove
 
 ```sh
-omarchy plugin remove io.github.jacueblol.plugin-sync
-rm -rf ~/.local/state/omarchy-plugin-sync   # local copy of the sync repo
+omarchy plugin remove io.github.jacueblol.omarchy-sync
+rm -rf ~/.local/state/omarchy-sync   # local copy of the sync repo and backups
 ```
 
-Removing the plugin leaves your plugins and bar as they are. The sync repo
+Removing the plugin leaves your plugins, bar, and config files as they are. The sync repo
 stays on GitHub; delete it there if you no longer want it.
 
 ## License

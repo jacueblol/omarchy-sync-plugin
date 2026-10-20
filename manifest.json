@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.jacueblol.plugin-sync",
-  "name": "Plugin Sync",
-  "version": "1.1.0",
+  "id": "io.github.jacueblol.omarchy-sync",
+  "name": "Omarchy Sync",
+  "version": "2.0.0",
   "author": "jacueblol",
   "license": "MIT",
   "homepage": "https://github.com/jacueblol/omarchy-plugin-sync",
-  "description": "Keep your Omarchy plugins and bar layout the same on every machine through a private git repo you own. Choose what syncs and when, per machine. Works alongside Omaplug.",
+  "description": "Keep your Omarchy plugins, bar layout, keybindings, and mouse settings the same on every machine through a private git repo you own. Choose what syncs and when, per machine. Works alongside Omaplug.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,13 +14,15 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Plugin Sync",
-    "description": "Sync plugins and bar layout between machines",
+    "displayName": "Omarchy Sync",
+    "description": "Sync plugins, bar layout, and config between machines",
     "category": "System",
     "aliases": [
       "sync",
       "plugins",
-      "dotfiles"
+      "dotfiles",
+      "keybindings",
+      "config"
     ],
     "allowMultiple": false,
     "defaultSection": "right",
@@ -34,7 +36,10 @@
       "removePlugins": true,
       "localOnly": "",
       "intervalMinutes": 15,
-      "notify": true
+      "notify": true,
+      "syncKeybindings": true,
+      "syncInput": false,
+      "extraFiles": ""
     },
     "schema": [
       {
@@ -95,6 +100,27 @@
         "label": "Sync other shell settings",
         "defaultValue": false,
         "description": "Everything else in shell.json, such as idle and lock timers."
+      },
+      {
+        "key": "syncKeybindings",
+        "type": "boolean",
+        "label": "Sync keybindings",
+        "defaultValue": true,
+        "description": "~/.config/hypr/bindings.lua. Put bindings for this machine only in hypr/bindings.local.lua."
+      },
+      {
+        "key": "syncInput",
+        "type": "boolean",
+        "label": "Sync mouse and keyboard input",
+        "defaultValue": false,
+        "description": "~/.config/hypr/input.lua: sensitivity, acceleration, scrolling, keyboard layout. Put settings for this machine only in hypr/input.local.lua."
+      },
+      {
+        "key": "extraFiles",
+        "type": "string",
+        "label": "Other files to sync",
+        "defaultValue": "",
+        "description": "Comma-separated paths under ~/.config, such as hypr/looknfeel.lua or starship.toml. Synced files are never deleted by a sync."
       },
       {
         "key": "localOnly",

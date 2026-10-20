@@ -8,7 +8,7 @@ import qs.Ui
 // icon (spinning while busy, a dot when something needs a push or pull).
 BarWidget {
   id: root
-  moduleName: "io.github.jacueblol.plugin-sync"
+  moduleName: "io.github.jacueblol.omarchy-sync"
 
   readonly property var panelItem: panelLoader.item
   readonly property bool busy: panelItem ? panelItem.busy !== "" : false
@@ -52,7 +52,7 @@ BarWidget {
   }
 
   IpcHandler {
-    target: "io.github.jacueblol.plugin-sync"
+    target: "io.github.jacueblol.omarchy-sync"
 
     function refresh(): void { if (root.panelItem) root.panelItem.refresh(false) }
     function sync(): void { if (root.panelItem) root.panelItem.runAction("auto") }
@@ -71,7 +71,7 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     text: "󰓦"
-    tooltipText: "Plugin Sync · " + (root.panelItem ? root.panelItem.headline : "Checking…")
+    tooltipText: "Omarchy Sync · " + (root.panelItem ? root.panelItem.headline : "Checking…")
     onPressed: function(b) {
       if (b === Qt.LeftButton) root.toggle()
     }
