@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.1.0
+
+- Theme and wallpaper sync (off by default): the current theme, themes you
+  installed from git or made yourself, and the current wallpaper.
+  Wallpapers from Wallpaper Library sync by name and are downloaded on the
+  other machine; others are copied into the repo.
+- Wallpaper Library categories sync (off by default): other machines
+  download the categories you have.
+- The panel warns about repo and disk size when either is on, and pulls list
+  the theme, wallpaper, themes and categories they will change.
+- Fixed: a machine that syncs nothing from `shell.json` couldn't push.
+- Fixed: every pull rewrote `shell.json` and left a backup, even when
+  nothing changed.
+
 ## 2.0.0
 
 - Renamed from Plugin Sync to Omarchy Sync (`io.github.jacueblol.omarchy-sync`).

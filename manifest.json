@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "id": "io.github.jacueblol.omarchy-sync",
   "name": "Omarchy Sync",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "author": "jacueblol",
   "license": "MIT",
   "homepage": "https://github.com/jacueblol/omarchy-sync-plugin",
-  "description": "Keep your Omarchy plugins, bar layout, keybindings, and mouse settings the same on every machine through a private git repo you own. Choose what syncs and when, per machine. Works alongside Omaplug.",
+  "description": "Keep your Omarchy plugins, bar layout, keybindings, mouse settings, theme, and wallpaper the same on every machine through a private git repo you own. Choose what syncs and when, per machine. Works alongside Omaplug and Wallpaper Library.",
   "kinds": [
     "bar-widget"
   ],
@@ -22,7 +22,9 @@
       "plugins",
       "dotfiles",
       "keybindings",
-      "config"
+      "config",
+      "theme",
+      "wallpaper"
     ],
     "allowMultiple": false,
     "defaultSection": "right",
@@ -39,7 +41,9 @@
       "notify": true,
       "syncKeybindings": true,
       "syncInput": false,
-      "extraFiles": ""
+      "extraFiles": "",
+      "syncTheme": false,
+      "syncWallpaperLibrary": false
     },
     "schema": [
       {
@@ -121,6 +125,20 @@
         "label": "Other files to sync",
         "defaultValue": "",
         "description": "Comma-separated paths under ~/.config, such as hypr/looknfeel.lua or starship.toml. Synced files are never deleted by a sync."
+      },
+      {
+        "key": "syncTheme",
+        "type": "boolean",
+        "label": "Sync theme and wallpaper",
+        "defaultValue": false,
+        "description": "The current theme, themes you installed or made, and the current wallpaper. Wallpapers from outside the Wallpaper Library and hand-made themes are copied into the sync repo, which grows with every change."
+      },
+      {
+        "key": "syncWallpaperLibrary",
+        "type": "boolean",
+        "label": "Sync Wallpaper Library categories",
+        "defaultValue": false,
+        "description": "Needs the Wallpaper Library plugin. Downloads the dharmx/walls categories other machines have. Each category can be tens to hundreds of MB; the full library is several GB."
       },
       {
         "key": "localOnly",

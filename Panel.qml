@@ -30,6 +30,7 @@ Panel {
   // ---- Settings (defaults match manifest.json and the helper).
   readonly property string mode: String(setting("mode", "Push automatically"))
   readonly property int intervalMinutes: Math.max(5, Number(setting("intervalMinutes", 15)) || 15)
+  readonly property bool wallpaperLibraryInstalled: (status.plugins || []).some(function(p) { return p.id === "io.github.jacueblol.wallpaper-library" && p.status !== "remote" })
   readonly property var localOnly: String(setting("localOnly", "")).split(/[\s,]+/).filter(function(s) { return s !== "" })
 
   property var status: ({ configured: false, state: "loading", plugins: [], files: [], unsyncable: [] })
@@ -64,7 +65,7 @@ Panel {
     remote: "to pull",
     both: "changed on both"
   })
-  readonly property var plan: status.pullPlan || ({ install: [], remove: [], bar: false, pluginStates: false, other: false, files: [] })
+  readonly property var plan: status.pullPlan || ({ install: [], remove: [], bar: false, pluginStates: false, other: false, files: [], look: {} })
   readonly property var planLines: {
     var lines = []
     ;(plan.files || []).forEach(function(f) {
@@ -76,6 +77,11 @@ Panel {
     if (plan.bar) lines.push("Replace the bar layout and widget settings")
     if (plan.pluginStates) lines.push("Update which plugins are enabled")
     if (plan.other) lines.push("Replace other shell settings (idle, lock, …)")
+    var look = plan.look || {}
+    if ((look.categories || []).length) lines.push("Download wallpaper categories: " + look.categories.join(", ") + " (can be large)")
+    if ((look.themes || []).length) lines.push("Install or update themes: " + look.themes.join(", "))
+    if (look.theme) lines.push("Switch the theme to " + look.theme)
+    if (look.wallpaper) lines.push("Set the wallpaper to " + look.wallpaper)
     return lines
   }
   readonly property string syncedSummary: {
@@ -86,6 +92,8 @@ Panel {
     if (s.other === true) parts.push("shell settings")
     if (setting("syncKeybindings", true) === true) parts.push("keybindings")
     if (setting("syncInput", false) === true) parts.push("input")
+    if (setting("syncTheme", false) === true) parts.push("theme")
+    if (setting("syncWallpaperLibrary", false) === true) parts.push("wallpaper categories")
     var extra = String(setting("extraFiles", "")).split(/[\s,]+/).filter(function(x) { return x !== "" }).length
     if (extra) parts.push(extra + (extra === 1 ? " file" : " files"))
     return (parts.length ? "Syncs " + parts.join(", ") : "Syncs nothing") + " · " + mode
@@ -597,6 +605,8 @@ Panel {
               { key: "syncShellSettings", label: "Other shell settings", hint: "Idle, lock, and the rest of shell.json", fallback: false },
               { key: "syncKeybindings", label: "Keybindings", hint: "hypr/bindings.lua", fallback: true },
               { key: "syncInput", label: "Mouse and keyboard input", hint: "hypr/input.lua: sensitivity, scrolling, layout", fallback: false },
+              { key: "syncTheme", label: "Theme and wallpaper", hint: "Current theme, custom themes, current wallpaper", fallback: false },
+              { key: "syncWallpaperLibrary", label: "Wallpaper Library categories", hint: "Download the categories other machines have", fallback: false, needsLibrary: true },
               { key: "notify", label: "Notify after automatic pulls", hint: "", fallback: true }
             ]
 
@@ -604,8 +614,9 @@ Panel {
               id: toggleRow
               required property var modelData
               readonly property bool checked: root.setting(modelData.key, modelData.fallback) === true
+              visible: !modelData.needsLibrary || root.wallpaperLibraryInstalled
               width: parent.width
-              implicitHeight: Math.max(labels.implicitHeight, toggle.implicitHeight)
+              implicitHeight: visible ? Math.max(labels.implicitHeight, toggle.implicitHeight) : 0
 
               Column {
                 id: labels
@@ -644,6 +655,16 @@ Panel {
                 onToggled: root.saveSetting(toggleRow.modelData.key, !toggleRow.checked)
               }
             }
+          }
+
+          Text {
+            visible: root.setting("syncTheme", false) === true || root.setting("syncWallpaperLibrary", false) === true
+            width: parent.width
+            wrapMode: Text.WordWrap
+            text: "⚠ Size: wallpapers from outside the Wallpaper Library and hand-made themes are copied into the sync repo, and every change stays in its history. Wallpaper Library categories are downloaded from dharmx/walls on each machine; each can be tens to hundreds of MB, and the full library is several GB."
+            color: root.urgentColor
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
           }
 
           Text {

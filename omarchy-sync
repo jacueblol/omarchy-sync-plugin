@@ -19,6 +19,8 @@
 #   syncKeybindings    ~/.config/hypr/bindings.lua
 #   syncInput          ~/.config/hypr/input.lua (mouse, touchpad, keyboard)
 #   extraFiles         more paths under ~/.config to sync as whole files
+#   syncTheme          the theme, custom themes, and the current wallpaper
+#   syncWallpaperLibrary  which Wallpaper Library categories are downloaded
 #   localOnly          plugin ids that stay machine-specific
 #   removePlugins      let a pull remove plugins the repo no longer lists
 #   mode               Manual | Push automatically | Push and pull automatically
@@ -33,6 +35,13 @@
 # Synced files are never deleted by a sync, only created or replaced. A pull
 # backs up every file it replaces, and rolls them all back if Hyprland reports
 # new config errors after reloading.
+#
+# look.json holds the theme name, custom themes (a git URL, or a hash of the
+# files copied to themes/<name>/), the wallpaper, and Wallpaper Library
+# categories. A Wallpaper Library image that dharmx/walls has is synced by its
+# path and downloaded on its own; any other wallpaper is copied to wallpapers/.
+# Wallpapers compare by content hash, so where an image lives doesn't matter.
+# Like files, themes and categories are only ever added.
 
 set -uo pipefail
 
@@ -50,6 +59,11 @@ BASE_FILE="$STATE_DIR/synced-commit"
 URL_FILE="$STATE_DIR/repo-url"
 LOG_FILE="$STATE_DIR/last.log"
 BACKUP_DIR="$STATE_DIR/backups"
+THEMES_DIR="$CONFIG_DIR/omarchy/themes"
+SYNCED_WALLPAPERS="$CONFIG_DIR/omarchy/wallpapers/synced"
+OMARCHY_CURRENT="${OMARCHY_SYNC_OMARCHY_CURRENT:-$HOME/.local/state/omarchy/current}"
+OMARCHY_ROOT="${OMARCHY_PATH:-/usr/share/omarchy}"
+WALLPAPER_LIBRARY="$PLUGINS_DIR/io.github.jacueblol.wallpaper-library/wallpaper-library"
 HOST="$(cat /etc/hostname 2>/dev/null || uname -n)"
 
 if [[ ! -e $STATE_DIR && -d ${STATE_DIR%/*}/omarchy-plugin-sync ]]; then
@@ -94,6 +108,11 @@ load_settings() {
     } | jq -Rnc '[inputs | split("\t") | {path: .[0], label: .[1]}
         | select(.path | (startswith("/") or test("(^|/)\\.\\.(/|$)")) | not)] | unique_by(.path)'
   )
+  SYNC_THEME=$(setting syncTheme false)
+  # Only while Wallpaper Library is installed; a pull may install it.
+  SYNC_LIBRARY_SETTING=$(setting syncWallpaperLibrary false)
+  SYNC_LIBRARY=$SYNC_LIBRARY_SETTING
+  [[ -x $WALLPAPER_LIBRARY ]] || SYNC_LIBRARY=false
 }
 
 synced_paths() { jq -r '.[].path' <<<"$SYNC_FILES"; }
@@ -284,20 +303,230 @@ apply_files() {
   [[ -d $backup ]] && echo "Replaced files were backed up to $backup"
 }
 
+# ---------------------------------------------------------------- theme and wallpaper
+
+# A short hash of every file in a folder (minus .git), for copied themes.
+dir_hash() {
+  (cd "$1" 2>/dev/null && find -L . -type f -not -path './.git/*' -print0 | sort -z | xargs -0 -r sha256sum) | sha256sum | cut -c1-16
+}
+
+file_hash() { [[ -f $1 ]] && sha256sum <"$1" | cut -d' ' -f1; }
+
+# User-installed themes as [{name, url}] for git clones and [{name, hash}] for
+# hand-made ones. Symlinks are someone's working copy and empty folders
+# aren't themes, so both are skipped.
+local_themes_json() {
+  local dir name url
+  for dir in "$THEMES_DIR"/*/; do
+    dir=${dir%/}
+    name=${dir##*/}
+    [[ ! -L $dir && -n $(find "$dir" -type f -print -quit 2>/dev/null) ]] || continue
+    if [[ -d $dir/.git ]] && url=$(git -C "$dir" remote get-url origin 2>/dev/null); then
+      jq -nc --arg n "$name" --arg u "$url" '{name: $n, url: $u}'
+    else
+      jq -nc --arg n "$name" --arg h "$(dir_hash "$dir")" '{name: $n, hash: $h}'
+    fi
+  done | jq -sc 'sort_by(.name)'
+}
+
+current_theme() { cat "$OMARCHY_CURRENT/theme.name" 2>/dev/null; }
+
+current_background() { readlink -f "$OMARCHY_CURRENT/background" 2>/dev/null; }
+
+library_categories() {
+  [[ $SYNC_LIBRARY == true ]] || { echo null; return; }
+  "$WALLPAPER_LIBRARY" categories 2>/dev/null | jq -Rnc '[inputs | select(length > 0)] | sort'
+}
+
+# The parts of the look this machine syncs, in the form fingerprints compare.
+local_look_json() {
+  local name="" bg="" themes='[]'
+  if [[ $SYNC_THEME == true ]]; then
+    name=$(current_theme)
+    bg=$(file_hash "$(current_background)")
+    themes=$(local_themes_json)
+  fi
+  jq -nc --argjson t "$SYNC_THEME" --argjson l "$SYNC_LIBRARY" --arg name "$name" --arg bg "$bg" \
+    --argjson themes "$themes" --argjson cats "$(library_categories)" '
+    (if $t then {theme: $name, themes: $themes, background: (if $bg == "" then null else $bg end)} else {} end)
+    + (if $l then {categories: $cats} else {} end)'
+}
+
+# The same parts of look.json at a commit (or none, for no commit).
+repo_look_json() {
+  { if [[ -n $1 ]]; then repo_file "$1" look.json '{}'; else echo '{}'; fi; } |
+    jq -c --argjson t "$SYNC_THEME" --argjson l "$SYNC_LIBRARY" '
+      (if $t then {
+        theme: (.theme // ""),
+        themes: ((.themes // []) | map(if .url then {name, url} else {name, hash} end) | sort_by(.name)),
+        background: (.background.hash // null)
+      } else {} end)
+      + (if $l then {categories: ((.categories // []) | sort)} else {} end)'
+}
+
+# How look.json records the wallpaper at $1: by its path in the Wallpaper
+# Library when dharmx/walls has it, by its path in Omarchy for stock theme
+# backgrounds, and otherwise as a copy in the repo.
+background_entry() {
+  local bg="$1" hash="$2" name=${1##*/} lib rel
+  if [[ -x $WALLPAPER_LIBRARY ]]; then
+    lib=$(readlink -f "$("$WALLPAPER_LIBRARY" path)")
+    rel=${bg#"$lib"/}
+    if [[ -n $lib && $bg == "$lib"/* && $rel =~ ^[^/]+/[^/]+$ ]] &&
+      curl -fsIL --max-time 10 "https://raw.githubusercontent.com/dharmx/walls/HEAD/${rel// /%20}" >/dev/null 2>&1; then
+      jq -nc --arg h "$hash" --arg n "$name" --arg r "$rel" '{hash: $h, name: $n, library: $r}'
+      return
+    fi
+  fi
+  if [[ $bg == "$OMARCHY_ROOT"/* ]]; then
+    jq -nc --arg h "$hash" --arg n "$name" --arg r "${bg#"$OMARCHY_ROOT"/}" '{hash: $h, name: $n, omarchy: $r}'
+    return
+  fi
+  mkdir -p "$REPO_DIR/wallpapers" && cp "$bg" "$REPO_DIR/wallpapers/$name" || return 1
+  jq -nc --arg h "$hash" --arg n "$name" '{hash: $h, name: $n, file: ("wallpapers/" + $n)}'
+}
+
+# Write this machine's look into the repo checkout, keeping the parts it
+# doesn't sync.
+push_look() {
+  [[ $SYNC_THEME == true || $SYNC_LIBRARY == true ]] || return 0
+  local look themes name bg hash entry
+  look=$(repo_file HEAD look.json '{}')
+
+  if [[ $SYNC_THEME == true ]]; then
+    themes=$(local_themes_json)
+    # Hand-made themes are copied; git themes travel as their URL.
+    while IFS= read -r name; do
+      rm -rf "${REPO_DIR:?}/themes/$name" && mkdir -p "$REPO_DIR/themes" &&
+        cp -rL "$THEMES_DIR/$name" "$REPO_DIR/themes/$name" && rm -rf "$REPO_DIR/themes/$name/.git" ||
+        die "could not copy theme $name; nothing was pushed"
+    done < <(jq -r '.[] | select(.hash) | .name' <<<"$themes")
+
+    bg=$(current_background)
+    entry=null
+    if [[ -f $bg ]]; then
+      hash=$(file_hash "$bg")
+      entry=$(jq -c '.background // null' <<<"$look")
+      if [[ $(jq -r '.hash // ""' <<<"$entry") != "$hash" ]]; then
+        entry=$(background_entry "$bg" "$hash") || die "could not copy the wallpaper; nothing was pushed"
+      fi
+    fi
+    # Only the current wallpaper's copy stays in the repo.
+    find "$REPO_DIR/wallpapers" -type f -not -name "$(jq -r '.file // "" | split("/") | last' <<<"$entry")" -delete 2>/dev/null
+
+    look=$(jq -c --arg theme "$(current_theme)" --argjson themes "$themes" --argjson bg "$entry" \
+      '.theme = $theme | .themes = $themes | .background = $bg' <<<"$look")
+  fi
+
+  if [[ $SYNC_LIBRARY == true ]]; then
+    look=$(jq -c --argjson cats "$(library_categories)" '.categories = $cats' <<<"$look")
+  fi
+  jq -S . <<<"$look" >"$REPO_DIR/look.json"
+}
+
+# A local path for the wallpaper look.json describes, downloading or copying
+# it if needed.
+resolve_background() {
+  local entry="$1" name rel lib dest
+  name=$(jq -r '.name // "wallpaper"' <<<"$entry")
+  name=${name//\//_}
+  if rel=$(jq -re '.library // empty' <<<"$entry"); then
+    if [[ -x $WALLPAPER_LIBRARY ]]; then
+      "$WALLPAPER_LIBRARY" fetch "$rel" 2>>"$LOG_FILE" | tail -n 1
+      return
+    fi
+    dest=$SYNCED_WALLPAPERS/$name
+    [[ -f $dest ]] || { mkdir -p "$SYNCED_WALLPAPERS" &&
+      curl -fsSL --max-time 120 -o "$dest" "https://raw.githubusercontent.com/dharmx/walls/HEAD/${rel// /%20}"; } || return 1
+  elif rel=$(jq -re '.omarchy // empty' <<<"$entry"); then
+    dest=$OMARCHY_ROOT/$rel
+    [[ -f $dest ]] || return 1
+  elif rel=$(jq -re '.file // empty' <<<"$entry"); then
+    dest=$SYNCED_WALLPAPERS/$name
+    mkdir -p "$SYNCED_WALLPAPERS" && git -C "$REPO_DIR" show "HEAD:$rel" >"$dest" || return 1
+  else
+    return 1
+  fi
+  printf '%s\n' "$dest"
+}
+
+# Make this machine's look match look.json. Prints what it did; returns 1 if
+# anything was skipped.
+pull_look() {
+  [[ $SYNC_THEME == true || $SYNC_LIBRARY == true ]] || return 0
+  local look missing name url hash dest backup entry path ok=0
+  look=$(repo_file HEAD look.json '{}')
+
+  if [[ $SYNC_LIBRARY == true ]]; then
+    mapfile -t missing < <(comm -23 <(jq -r '.categories // [] | .[]' <<<"$look" | sort -u) <("$WALLPAPER_LIBRARY" categories | sort -u))
+    if ((${#missing[@]})); then
+      if "$WALLPAPER_LIBRARY" download "${missing[@]}" >>"$LOG_FILE" 2>&1; then
+        echo "Downloaded wallpaper categories: ${missing[*]}"
+      else
+        echo "Skipped wallpaper categories ${missing[*]} (download failed)"; ok=1
+      fi
+    fi
+  fi
+  [[ $SYNC_THEME == true ]] || return $ok
+
+  backup="$BACKUP_DIR/$(date +%Y%m%d-%H%M%S)"
+  # A non-whitespace separator, so an empty url isn't skipped over.
+  while IFS=$'\x1f' read -r name url hash; do
+    # The same names omarchy theme install accepts.
+    (LC_ALL=C; [[ $name =~ ^[a-z0-9_][a-z0-9._+-]*$ ]]) || continue
+    dest=$THEMES_DIR/$name
+    if [[ -n $url ]]; then
+      [[ -e $dest ]] && continue
+      if omarchy-git-url-check "$url" >>"$LOG_FILE" 2>&1 && git clone --quiet -- "$url" "$dest" >>"$LOG_FILE" 2>&1; then
+        echo "Installed theme $name"
+      else
+        echo "Skipped theme $name (install failed)"; ok=1
+      fi
+    else
+      [[ -d $REPO_DIR/themes/$name && ! -L $dest ]] || continue
+      [[ -d $dest && $(dir_hash "$dest") == "$hash" ]] && continue
+      if [[ -d $dest ]]; then
+        mkdir -p "$backup/themes" && mv "$dest" "$backup/themes/$name" || { echo "Skipped theme $name (backup failed)"; ok=1; continue; }
+      fi
+      mkdir -p "$THEMES_DIR" && cp -r "$REPO_DIR/themes/$name" "$dest" && echo "Updated theme $name"
+    fi
+  done < <(jq -r '.themes // [] | .[] | [.name, .url // "", .hash // ""] | join("\u001f")' <<<"$look")
+
+  # The theme first: setting it also picks one of its backgrounds.
+  name=$(jq -r '.theme // ""' <<<"$look")
+  if [[ -n $name && $name != "$(current_theme)" ]]; then
+    if omarchy theme set "$name" >>"$LOG_FILE" 2>&1; then echo "Theme set to $name"
+    else echo "Skipped theme $name (could not set it)"; ok=1; fi
+  fi
+
+  entry=$(jq -c '.background // null' <<<"$look")
+  hash=$(jq -r '.hash // ""' <<<"$entry")
+  if [[ -n $hash && $hash != "$(file_hash "$(current_background)")" ]]; then
+    if path=$(resolve_background "$entry") && [[ -f $path ]] && omarchy theme bg set "$path" >>"$LOG_FILE" 2>&1; then
+      echo "Wallpaper set to ${path##*/}"
+    else
+      echo "Skipped wallpaper $(jq -r '.name' <<<"$entry") (could not get it)"; ok=1
+    fi
+  fi
+  return $ok
+}
+
 # ---------------------------------------------------------------- comparing
 
 # Canonical JSON of what this machine syncs, from a plugins list, a
-# shell.json, and synced file blob ids. Equal fingerprints mean nothing to sync.
+# shell.json, synced file blob ids, and the look. Equal fingerprints mean
+# nothing to sync.
 fingerprint() {
-  local plugins="$1" shell="$2" files="$3"
-  jqs -nS --argjson p "$plugins" --argjson s "$shell" --argjson f "$files" '{
+  local plugins="$1" shell="$2" files="$3" look="$4"
+  jqs -nS --argjson p "$plugins" --argjson s "$shell" --argjson f "$files" --argjson l "$look" '{
     plugins: (if $c.plugins then ($p | map(select(is_local($ids) | not)) | map(.id) | sort) else null end),
     shell: ($s | project($c; $ids)),
-    files: $f
+    files: $f,
+    look: $l
   }' | sha256sum | cut -d' ' -f1
 }
 
-local_fingerprint() { fingerprint "$(local_plugins_json)" "$(shell_json)" "$(local_files_json)"; }
+local_fingerprint() { fingerprint "$(local_plugins_json)" "$(shell_json)" "$(local_files_json)" "$(local_look_json)"; }
 
 # A JSON file from the repo at a commit, or the fallback if missing or broken.
 repo_file() {
@@ -314,7 +543,7 @@ valid_shell() { jq -e 'type == "object" and length > 0' >/dev/null 2>&1 <<<"$1";
 
 commit_fingerprint() {
   [[ -n $1 ]] || { echo none; return; }
-  fingerprint "$(repo_file "$1" plugins.json '[]')" "$(repo_file "$1" shell.json '{}')" "$(repo_files_json "$1")"
+  fingerprint "$(repo_file "$1" plugins.json '[]')" "$(repo_file "$1" shell.json '{}')" "$(repo_files_json "$1")" "$(repo_look_json "$1")"
 }
 
 # ---------------------------------------------------------------- repo
@@ -378,12 +607,13 @@ cmd_status() {
   fi
   if [[ $offline != --offline ]]; then fetch || fetched=false; fi
 
-  local files base
+  local files base look
   shell=$(shell_json)
   files=$(local_files_json)
+  look=$(local_look_json)
   remote=$(remote_head)
   base=$(base_commit)
-  state=$(classify "$(fingerprint "$have" "$shell" "$files")" "$remote" "$base")
+  state=$(classify "$(fingerprint "$have" "$shell" "$files" "$look")" "$remote" "$base")
 
   local remote_plugins='[]' remote_shell='{}' last_host="" last_time=""
   if [[ -n $remote ]]; then
@@ -402,8 +632,18 @@ cmd_status() {
     --argjson unsync "$(unsyncable_json)" --argjson settings "$settings" \
     --argjson syncFiles "$SYNC_FILES" --argjson localFiles "$files" \
     --argjson remoteFiles "$(repo_files_json "$remote")" --argjson baseFiles "$(repo_files_json "$base")" \
-    --argjson filePlan "$(file_pull_plan "$remote")" '
+    --argjson filePlan "$(file_pull_plan "$remote")" \
+    --argjson localLook "$look" --argjson remoteLook "$(repo_look_json "$remote")" --argjson baseLook "$(repo_look_json "$base")" \
+    --argjson repoLook "$(if [[ -n $remote ]]; then repo_file "$remote" look.json '{}'; else echo '{}'; fi)" '
     ($local | map(.id)) as $l | ($remote | map(.id)) as $r |
+    def look_status($keys):
+      ($localLook | with_entries(select(.key | IN($keys[])))) as $mine
+      | ($remoteLook | with_entries(select(.key | IN($keys[])))) as $theirs
+      | ($baseLook | with_entries(select(.key | IN($keys[])))) as $was
+      | if $mine == $theirs then "synced"
+        elif ($hasRemote | not) or $theirs == $was then "local"
+        elif $mine == $was then "remote"
+        else "both" end;
     (($shell | project($c; $ids)) as $mine | ($remoteShell | project($c; $ids)) as $theirs | {
       bar: ($c.bar and $hasRemote and $mine.bar != $theirs.bar),
       plugins: ($c.plugins and $hasRemote and ($mine.plugins != $theirs.plugins or $mine.disabledPlugins != $theirs.disabledPlugins)),
@@ -426,13 +666,22 @@ cmd_status() {
           if $localFiles[$p] == $remoteFiles[$p] then "synced"
           elif $remoteFiles[$p] == null or $remoteFiles[$p] == $baseFiles[$p] then "local"
           elif $localFiles[$p] == $baseFiles[$p] then "remote"
-          else "both" end)} ],
+          else "both" end)} ]
+        + (if $localLook | has("theme") then [{path: "", label: "Theme and wallpaper", status: look_status(["theme", "themes", "background"])}] else [] end)
+        + (if $localLook | has("categories") then [{path: "", label: "Wallpaper Library categories", status: look_status(["categories"])}] else [] end),
       # What a pull would do here.
       pullPlan: {
         install: (if $c.plugins then [$remote[] | select(is_local($ids) | not) | .id | select(IN($l[]) | not)] else [] end),
         remove: (if $c.plugins and $settings.removePlugins then [$local[] | select(is_local($ids) | not) | .id | select(IN($r[]) | not)] else [] end),
         bar: $differs.bar, pluginStates: $differs.plugins, other: $differs.other,
-        files: $filePlan
+        files: $filePlan,
+        look: (if $hasRemote then {
+          theme: (if ($localLook | has("theme")) and ($repoLook.theme // "") != "" and $repoLook.theme != $localLook.theme then $repoLook.theme else null end),
+          themes: (if $localLook | has("themes") then [($repoLook.themes // [])[] | . as $t
+            | select(($localLook.themes | map(select(.name == $t.name and (if $t.url then true else .hash == $t.hash end))) | length) == 0) | .name] else [] end),
+          wallpaper: (if ($localLook | has("background")) and ($repoLook.background.hash // null) != null and $repoLook.background.hash != $localLook.background then $repoLook.background.name else null end),
+          categories: (if $localLook | has("categories") then (($repoLook.categories // []) - ($localLook.categories // [])) else [] end)
+        } else {theme: null, themes: [], wallpaper: null, categories: []} end)
       }
     }'
 }
@@ -463,7 +712,8 @@ cmd_push() {
     printf '%s\n' "$repo_plugins" >"$REPO_DIR/plugins.json"
   fi
   local merged
-  merged=$(jqs -S --argjson mine "$shell" 'merge($mine; $c; $ids)' <<<"$repo_shell") && valid_shell "$merged" \
+  # Empty is fine here: a machine may sync nothing from shell.json.
+  merged=$(jqs -S --argjson mine "$shell" 'merge($mine; $c; $ids)' <<<"$repo_shell") && jq -e 'type == "object"' >/dev/null <<<"$merged" \
     || die "could not merge shell.json; nothing was pushed"
   printf '%s\n' "$merged" >"$REPO_DIR/shell.json"
 
@@ -474,8 +724,9 @@ cmd_push() {
     mkdir -p "$(dirname "$REPO_DIR/files/$p")" && cp "$CONFIG_DIR/$p" "$REPO_DIR/files/$p" || die "could not copy $p; nothing was pushed"
   done < <(synced_paths)
 
-  git -C "$REPO_DIR" add plugins.json shell.json
-  [[ -d $REPO_DIR/files ]] && git -C "$REPO_DIR" add files
+  push_look
+
+  git -C "$REPO_DIR" add -A .
   if ! git -C "$REPO_DIR" diff --cached --quiet; then
     git -C "$REPO_DIR" -c user.name="Omarchy Sync" -c user.email="omarchy-sync@$HOST" commit --quiet -m "sync from $HOST" || die "commit failed"
     git -C "$REPO_DIR" push --quiet origin "HEAD:$(branch)" 2>/dev/null || die "push failed"
@@ -540,11 +791,15 @@ cmd_pull() {
   current=$(shell_json)
   merged=$(jqs --argjson theirs "$(repo_file HEAD shell.json '{}')" 'merge($theirs; $c; $ids)' <<<"$current") && valid_shell "$merged" \
     || die "could not merge the synced shell.json; this machine's shell.json was left unchanged"
-  if [[ $(jq -S . <<<"$current") != $(jq -S . <<<"$merged") ]]; then
+  if [[ $(jq -S . <<<"$current") != "$(jq -S . <<<"$merged")" ]]; then
     [[ -f $SHELL_JSON ]] && cp "$SHELL_JSON" "$SHELL_JSON.bak.$(date +%s)"
     printf '%s\n' "$merged" >"$SHELL_JSON.tmp" && mv "$SHELL_JSON.tmp" "$SHELL_JSON"
     echo "Applied synced shell settings (backup saved next to shell.json)"
   fi
+
+  # The look last: a pull may just have installed Wallpaper Library.
+  [[ $SYNC_LIBRARY_SETTING == true && -x $WALLPAPER_LIBRARY ]] && SYNC_LIBRARY=true
+  pull_look || skipped+=("parts of the theme or wallpaper (see above)")
 
   omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
   omarchy-shell shell reloadConfig >/dev/null 2>&1 || true

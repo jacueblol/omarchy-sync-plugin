@@ -1,7 +1,7 @@
 # Omarchy Sync
 
-Keep your Omarchy plugins, bar layout, keybindings, and mouse settings the
-same on every machine. Omarchy Sync records which plugins you have installed,
+Keep your Omarchy plugins, bar layout, keybindings, mouse settings, theme,
+and wallpaper the same on every machine. Omarchy Sync records which plugins you have installed,
 how your bar is arranged, and the config files you choose in a private git
 repo you own. Your other machines read that repo and install, remove, and
 arrange their plugins and update their config to match.
@@ -24,6 +24,11 @@ Sync's local state, so it carries on from the last sync.
   `hypr/looknfeel.lua` or `starship.toml`.
 - **Other shell settings** (optional): idle and lock timers and the rest of
   `shell.json`.
+- **Theme and wallpaper** (optional): the current theme, themes you
+  installed or made yourself, and the current wallpaper.
+- **Wallpaper Library categories** (optional): with the
+  [Wallpaper Library](https://github.com/jacueblol/omarchy-wallpaper-library)
+  plugin, other machines download the categories you have.
 - **Per-machine choices**: each machine picks what it syncs, which plugins
   stay machine-specific, and when it syncs. Pushing only replaces the parts a
   machine syncs.
@@ -43,6 +48,10 @@ Each machine chooses what it syncs and when. Nothing changes on a machine
 without your say-so: by default a machine only shares its own changes, and
 applying changes from elsewhere is a **Pull** you confirm after seeing exactly
 what it will do.
+
+It works alongside [Wallpaper Library](https://github.com/jacueblol/omarchy-wallpaper-library):
+wallpapers picked from it sync by name and are downloaded on the other
+machine, instead of being copied into your sync repo.
 
 It works alongside [Omaplug](https://github.com/fross100/omaplug): install,
 update, or remove plugins and arrange the bar in Omaplug as usual, and Omarchy
@@ -134,6 +143,8 @@ can sync different things.
 | Keybindings | on | `~/.config/hypr/bindings.lua` |
 | Mouse and keyboard input | off | `~/.config/hypr/input.lua`: sensitivity, acceleration, scrolling, keyboard layout. Off by default because laptops and desktops usually want different values |
 | Other files | none | Comma-separated paths under `~/.config`, such as `hypr/looknfeel.lua, starship.toml` |
+| Theme and wallpaper | off | The current theme, user themes, and the current wallpaper. See the size note below |
+| Wallpaper Library categories | off | Shown when Wallpaper Library is installed. Downloads the categories other machines have. Each can be tens to hundreds of MB |
 | Notify after automatic pulls | on | Desktop notification when a pull ran on its own |
 | Automatic sync | Push automatically | **Manual**: only shows the state. **Push automatically**: shares this machine's changes, but other machines' changes wait for your Pull. **Push and pull automatically**: also applies other machines' changes without asking |
 | When both machines changed | Ask | **Ask**, **Keep this machine** (push), or **Use the repo** (pull, only in Push and pull mode) |
@@ -174,6 +185,29 @@ omarchy bar move io.github.jacueblol.omarchy-sync --section right
   anything else. A sync never deletes a file: a machine without the file just
   doesn't share it.
 
+### Theme and wallpaper
+
+- **Theme**: a pull switches to the same theme with `omarchy theme set`.
+- **Themes you installed** from git sync as their URL and are cloned on the
+  other machine. **Themes you made** (folders in `~/.config/omarchy/themes/`
+  without a git origin, including overlays on stock themes) are copied into
+  the repo. A pull backs up a theme folder before replacing it.
+- **Wallpaper**: wallpapers compare by content, so it doesn't matter where
+  the image lives on each machine.
+  - From the Wallpaper Library, and dharmx/walls has it: synced as its path;
+    the other machine downloads only that image.
+  - A stock Omarchy theme background: synced as its path.
+  - Anything else: the image is copied into the repo and saved on the other
+    machine in `~/.config/omarchy/wallpapers/synced/`. Only the current
+    wallpaper's copy is kept in the repo.
+- **Wallpaper Library categories**: categories other machines have are
+  downloaded from dharmx/walls. Categories are never removed by a sync.
+
+> **Size:** both options are off by default. Copied wallpapers and themes
+> stay in the sync repo's git history after you change them, so a repo that
+> syncs many custom wallpapers keeps growing. Downloading wallpaper
+> categories can use several GB of disk on each machine.
+
 ### Settings for one machine only
 
 Settings that should differ between machines, such as mouse sensitivity on a
@@ -201,9 +235,12 @@ it will change first and waits for you.
 
 No sudo or pkexec is required. Omarchy Sync runs `git`, `jq`, `flock`,
 `notify-send`, `gh` (only when creating the repo during setup), `hyprctl`,
+`curl` and `omarchy theme` (for theme and wallpaper sync),
 the `omarchy plugin` and `omarchy bar` commands, and `omarchy-shell` IPC. It
 writes only to `~/.config/omarchy/shell.json` and the files you chose to sync
-(on a pull, after a backup), `~/.config/omarchy/plugins/` (through `omarchy
+(on a pull, after a backup), `~/.config/omarchy/themes/` and
+`~/.config/omarchy/wallpapers/` (with theme and wallpaper sync on), the
+Wallpaper Library folder (through its commands), `~/.config/omarchy/plugins/` (through `omarchy
 plugin`), and its own state in `~/.local/state/omarchy-sync/`.
 
 ## Dependencies
