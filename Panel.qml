@@ -40,7 +40,7 @@ Panel {
   property string confirmAction: "" // "push" | "pull"
 
   readonly property string syncState: status.state || "loading"
-  readonly property bool needsAttention: ["local", "remote", "both", "new", "error"].indexOf(syncState) !== -1
+  readonly property bool needsAttention: ["local", "remote", "both", "new", "incomplete", "error"].indexOf(syncState) !== -1
   readonly property var stateText: ({
     loading: "Checking…",
     unconfigured: "Not set up yet",
@@ -49,6 +49,7 @@ Panel {
     remote: "Another machine has changes to pull",
     both: "Both machines changed. Pick which one wins",
     new: "First sync here. Pull to adopt the shared setup",
+    incomplete: "Last pull didn't finish. Pull to retry",
     error: status.error || "Sync error"
   })
   readonly property string headline: busy ? "Syncing…" : stateText[syncState] || syncState
@@ -122,7 +123,7 @@ Panel {
   // Pushing over another machine's changes, or pulling over this machine's
   // config, is confirmed first with the exact list of what changes.
   function request(action) {
-    var overwritesOther = action === "push" && ["remote", "both", "new"].indexOf(syncState) !== -1
+    var overwritesOther = action === "push" && ["remote", "both", "new", "incomplete"].indexOf(syncState) !== -1
     var changesHere = action === "pull" && planLines.length > 0
     if (overwritesOther || changesHere) {
       confirmAction = action
@@ -284,7 +285,7 @@ Panel {
               width: parent.width
               textFormat: Text.PlainText
               text: root.headline.toUpperCase()
-              color: root.syncState === "both" || root.syncState === "error" ? root.urgentColor : Color.accent
+              color: ["both", "incomplete", "error"].indexOf(root.syncState) !== -1 ? root.urgentColor : Color.accent
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               font.bold: true
@@ -377,7 +378,7 @@ Panel {
               foreground: root.foreground
               fontFamily: root.fontFamily
               bordered: true
-              active: root.syncState === "remote" || root.syncState === "new"
+              active: root.syncState === "remote" || root.syncState === "new" || root.syncState === "incomplete"
               onClicked: root.request("pull")
             }
 
@@ -392,6 +393,18 @@ Panel {
               bordered: true
               onClicked: root.openOmaplug()
             }
+          }
+
+          Text {
+            visible: root.syncState === "incomplete" && (root.status.incomplete || []).length > 0
+            width: parent.width
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: "Couldn't apply: " + (root.status.incomplete || []).join("; ")
+              + ". Automatic pushes wait until a pull succeeds, so this machine doesn't undo the other one's changes. Push to keep this machine's setup instead."
+            color: root.urgentColor
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
           }
 
           PanelSeparator { foreground: root.foreground }
@@ -519,7 +532,9 @@ Panel {
             textFormat: Text.PlainText
             text: root.confirmAction === "pull"
               ? "Pulling will change this machine:"
-              : "Pushing will replace what your other machines shared, for the parts this machine syncs."
+              : root.syncState === "incomplete"
+                ? "The last pull didn't finish. Pushing now replaces what your other machines shared with this machine's setup."
+                : "Pushing will replace what your other machines shared, for the parts this machine syncs."
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.body

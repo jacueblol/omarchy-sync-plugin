@@ -10,6 +10,10 @@
   download the categories you have.
 - The panel warns about repo and disk size when either is on, and pulls list
   the theme, wallpaper, themes and categories they will change.
+- A pull that can't apply something (a plugin or theme that won't install,
+  a wallpaper that won't download) leaves the machine in a new "Last pull
+  didn't finish" state. Automatic pushes wait until a pull succeeds, so the
+  machine doesn't push its old setup over what another machine shared.
 - Fixed: a machine that syncs nothing from `shell.json` couldn't push.
 - Fixed: every pull rewrote `shell.json` and left a backup, even when
   nothing changed.

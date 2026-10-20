@@ -39,6 +39,8 @@ Sync's local state, so it carries on from the last sync.
   anything happens.
 - **Safe file updates**: replaced files are backed up, and if Hyprland
   reports new config errors after a pull, every file is put back.
+- **No accidental undo**: if a pull can't apply something, automatic pushes
+  wait instead of sending this machine's old setup back over it.
 - **Automatic sync**: Manual, push automatically, or push and pull
   automatically, with a choice of who wins when both machines changed.
 - **Any git host**: a private GitHub repo created for you, or any git URL you
@@ -99,6 +101,7 @@ push or pull.
 | Changes to pull | Another machine shared changes |
 | Both changed | Each side changed since this machine last synced. Choose **Push** or **Pull** |
 | First sync here | This machine has never synced. Usually **Pull** |
+| Last pull didn't finish | A pull couldn't apply something, such as a theme whose git repo is gone. The panel lists what. Automatic pushes wait until a pull succeeds, so this machine doesn't undo the other machine's changes. **Pull** to retry, or **Push** to keep this machine's setup instead. **Push and pull automatically** retries on its own and only notifies again if something new fails |
 
 The panel lists each synced file (**synced**, **changed here**, **to pull**,
 or **changed on both**), then each plugin (**synced**, **only here**, **to

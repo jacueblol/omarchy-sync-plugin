@@ -92,7 +92,7 @@ BarWidget {
     width: Style.space(7)
     height: width
     radius: width / 2
-    color: root.syncState === "both" || root.syncState === "error"
+    color: ["both", "incomplete", "error"].indexOf(root.syncState) !== -1
       ? (root.bar ? root.bar.urgent : Color.urgent)
       : Color.accent
   }

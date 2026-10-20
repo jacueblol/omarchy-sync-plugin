@@ -59,6 +59,10 @@ BASE_FILE="$STATE_DIR/synced-commit"
 URL_FILE="$STATE_DIR/repo-url"
 LOG_FILE="$STATE_DIR/last.log"
 BACKUP_DIR="$STATE_DIR/backups"
+# What the last pull couldn't apply, one line each. While it exists and this
+# machine still differs, automatic pushes wait: pushing would send the old
+# state back over what the other machine shared.
+INCOMPLETE_FILE="$STATE_DIR/pull-incomplete"
 THEMES_DIR="$CONFIG_DIR/omarchy/themes"
 SYNCED_WALLPAPERS="$CONFIG_DIR/omarchy/wallpapers/synced"
 OMARCHY_CURRENT="${OMARCHY_SYNC_OMARCHY_CURRENT:-$HOME/.local/state/omarchy/current}"
@@ -584,6 +588,19 @@ classify() {
   fi
 }
 
+# The state to show and act on. After a pull that didn't finish, a machine
+# that differs from the repo is "incomplete" rather than "local" or "both", so
+# nothing pushes automatically; once it matches the repo, the note is cleared.
+effective_state() {
+  local state="$1"
+  [[ -f $INCOMPLETE_FILE ]] || { echo "$state"; return; }
+  case $state in
+    none) rm -f "$INCOMPLETE_FILE"; echo none ;;
+    local | both) echo incomplete ;;
+    *) echo "$state" ;;
+  esac
+}
+
 # ---------------------------------------------------------------- commands
 
 cmd_status() {
@@ -613,7 +630,7 @@ cmd_status() {
   look=$(local_look_json)
   remote=$(remote_head)
   base=$(base_commit)
-  state=$(classify "$(fingerprint "$have" "$shell" "$files" "$look")" "$remote" "$base")
+  state=$(effective_state "$(classify "$(fingerprint "$have" "$shell" "$files" "$look")" "$remote" "$base")")
 
   local remote_plugins='[]' remote_shell='{}' last_host="" last_time=""
   if [[ -n $remote ]]; then
@@ -634,7 +651,8 @@ cmd_status() {
     --argjson remoteFiles "$(repo_files_json "$remote")" --argjson baseFiles "$(repo_files_json "$base")" \
     --argjson filePlan "$(file_pull_plan "$remote")" \
     --argjson localLook "$look" --argjson remoteLook "$(repo_look_json "$remote")" --argjson baseLook "$(repo_look_json "$base")" \
-    --argjson repoLook "$(if [[ -n $remote ]]; then repo_file "$remote" look.json '{}'; else echo '{}'; fi)" '
+    --argjson repoLook "$(if [[ -n $remote ]]; then repo_file "$remote" look.json '{}'; else echo '{}'; fi)" \
+    --argjson incomplete "$(if [[ -f $INCOMPLETE_FILE ]]; then jq -Rnc '[inputs | select(length > 0)]' <"$INCOMPLETE_FILE"; else echo '[]'; fi)" '
     ($local | map(.id)) as $l | ($remote | map(.id)) as $r |
     def look_status($keys):
       ($localLook | with_entries(select(.key | IN($keys[])))) as $mine
@@ -652,7 +670,7 @@ cmd_status() {
     {
       configured: true, repo: $url, state: $state, host: $host, fetched: $fetched,
       lastHost: $lastHost, lastTime: $lastTime, settings: $settings,
-      differs: $differs, unsyncable: $unsync,
+      differs: $differs, unsyncable: $unsync, incomplete: $incomplete,
       plugins: (
         [ $local[] | . + {status: (
             if is_local($ids) then "machine"
@@ -735,6 +753,7 @@ cmd_push() {
     echo "Repo already matches this machine"
   fi
   git -C "$REPO_DIR" rev-parse HEAD >"$BASE_FILE"
+  rm -f "$INCOMPLETE_FILE"
 }
 
 cmd_pull() {
@@ -751,7 +770,7 @@ cmd_pull() {
   # is installed or removed.
   apply_files
 
-  local wanted have id url added=0 removed=0 skipped=()
+  local wanted have id url added=0 removed=0 skipped=() failed=()
   wanted=$(repo_file HEAD plugins.json '[]')
   have=$(local_plugins_json)
 
@@ -763,7 +782,7 @@ cmd_pull() {
       if omarchy plugin add "$url" --yes >>"$LOG_FILE" 2>&1; then
         added=$((added + 1))
       else
-        skipped+=("$id (install failed)")
+        skipped+=("$id (install failed)"); failed+=("Install plugin $id")
       fi
     done < <(jqs -r --argjson have "$have" '($have | map(.id)) as $h | .[] | select(is_local($ids) | not) | select((.id | IN($h[])) | not) | [.id, .url] | @tsv' <<<"$wanted")
 
@@ -779,7 +798,7 @@ cmd_pull() {
         if omarchy plugin remove "$id" --yes >>"$LOG_FILE" 2>&1; then
           removed=$((removed + 1))
         else
-          skipped+=("$id (remove failed)")
+          skipped+=("$id (remove failed)"); failed+=("Remove plugin $id")
         fi
       done < <(jqs -r --argjson wanted "$wanted" '($wanted | map(.id)) as $w | .[] | select(is_local($ids) | not) | .id | select(IN($w[]) | not)' <<<"$have")
     fi
@@ -799,7 +818,10 @@ cmd_pull() {
 
   # The look last: a pull may just have installed Wallpaper Library.
   [[ $SYNC_LIBRARY_SETTING == true && -x $WALLPAPER_LIBRARY ]] && SYNC_LIBRARY=true
-  pull_look || skipped+=("parts of the theme or wallpaper (see above)")
+  local look_out line
+  look_out=$(pull_look) || skipped+=("parts of the theme or wallpaper (see above)")
+  [[ -n $look_out ]] && printf '%s\n' "$look_out"
+  while IFS= read -r line; do failed+=("${line#Skipped }"); done < <(grep '^Skipped ' <<<"$look_out")
 
   omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
   omarchy-shell shell reloadConfig >/dev/null 2>&1 || true
@@ -807,6 +829,12 @@ cmd_pull() {
   omarchy-shell omaplug refresh >/dev/null 2>&1 || true
 
   git -C "$REPO_DIR" rev-parse HEAD >"$BASE_FILE"
+  if ((${#failed[@]})); then
+    printf '%s\n' "${failed[@]}" >"$INCOMPLETE_FILE"
+    echo "Pull didn't finish; automatic pushes wait until a pull succeeds"
+  else
+    rm -f "$INCOMPLETE_FILE"
+  fi
   echo "Pulled: $added installed, $removed removed"
   for id in "${skipped[@]}"; do echo "Skipped $id"; done
   ((${#skipped[@]} == 0))
@@ -821,9 +849,11 @@ cmd_auto() {
   ensure_repo
   fetch || exit 0
   remote=$(remote_head)
-  state=$(classify "$(local_fingerprint)" "$remote" "$(base_commit)")
+  state=$(effective_state "$(classify "$(local_fingerprint)" "$remote" "$(base_commit)")")
   case $state in
     local) action=push ;;
+    # Retry what didn't apply; never push over it.
+    incomplete) [[ $MODE == "Push and pull automatically" ]] && action=pull ;;
     remote) [[ $MODE == "Push and pull automatically" ]] && action=pull ;;
     both)
       case $ON_CONFLICT in
@@ -835,14 +865,20 @@ cmd_auto() {
   case $action in
     push) cmd_push ;;
     pull)
+      local before
+      before=$(cat "$INCOMPLETE_FILE" 2>/dev/null)
       if out=$(cmd_pull 2>&1); then notify "Omarchy synced" "$out"
-      else notify -u critical "Omarchy Sync needs attention" "$out"; fi
+      # A retry that failed the same way already notified.
+      elif [[ ! -f $INCOMPLETE_FILE || $(<"$INCOMPLETE_FILE") != "$before" ]]; then
+        notify -u critical "Omarchy Sync needs attention" "$out"
+      fi
       echo "$out" ;;
     *)
       case $state in
         remote) echo "Changes from another machine are ready to pull" ;;
         both) echo "Both machines changed; choose push or pull" ;;
         new) echo "First sync on this machine; choose push or pull" ;;
+        incomplete) echo "The last pull didn't finish; pull again to retry" ;;
         *) echo "In sync" ;;
       esac ;;
   esac
