@@ -3,7 +3,8 @@
 ## 2.0.0
 
 - Renamed from Plugin Sync to Omarchy Sync (`io.github.jacueblol.omarchy-sync`).
-  Local state carries over; see the README to switch.
+  Local state carries over; see the README to switch. The code moved to
+  github.com/jacueblol/omarchy-sync-plugin.
 - Syncs keybindings (`hypr/bindings.lua`, on by default) and mouse and
   keyboard input settings (`hypr/input.lua`, off by default), plus any other
   files under `~/.config` you list.

@@ -11,13 +11,41 @@ Sync, enter the same sync repo in its settings, then run
 `omarchy plugin remove io.github.jacueblol.plugin-sync`. It picks up Plugin
 Sync's local state, so it carries on from the last sync.
 
+## Features
+
+- **Plugins**: installs plugins another machine added, removes ones it
+  removed, and syncs which plugins are enabled.
+- **Bar**: widget order, bar position, and every widget's settings, such as
+  the clock's 12- or 24-hour format.
+- **Keybindings**: `~/.config/hypr/bindings.lua`.
+- **Mouse and keyboard input**: `~/.config/hypr/input.lua` (sensitivity,
+  acceleration, natural scrolling, keyboard layout).
+- **Any other config file** under `~/.config` you list, such as
+  `hypr/looknfeel.lua` or `starship.toml`.
+- **Other shell settings** (optional): idle and lock timers and the rest of
+  `shell.json`.
+- **Per-machine choices**: each machine picks what it syncs, which plugins
+  stay machine-specific, and when it syncs. Pushing only replaces the parts a
+  machine syncs.
+- **Per-machine overrides**: `hypr/bindings.local.lua` and
+  `hypr/input.local.lua` are never synced and load after the shared files.
+- **Confirmed pulls**: see every plugin to install or remove, every setting to
+  replace, and every file to change (with lines added and removed) before
+  anything happens.
+- **Safe file updates**: replaced files are backed up, and if Hyprland
+  reports new config errors after a pull, every file is put back.
+- **Automatic sync**: Manual, push automatically, or push and pull
+  automatically, with a choice of who wins when both machines changed.
+- **Any git host**: a private GitHub repo created for you, or any git URL you
+  can push to.
+
 Each machine chooses what it syncs and when. Nothing changes on a machine
 without your say-so: by default a machine only shares its own changes, and
 applying changes from elsewhere is a **Pull** you confirm after seeing exactly
 what it will do.
 
 It works alongside [Omaplug](https://github.com/fross100/omaplug): install,
-update, or remove plugins and arrange the bar in Omaplug as usual, and Plugin
+update, or remove plugins and arrange the bar in Omaplug as usual, and Omarchy
 Sync notices and shares the change. After a pull, Omaplug's list refreshes on
 its own.
 
@@ -26,14 +54,15 @@ its own.
 ## Install
 
 ```sh
-omarchy plugin add https://github.com/jacueblol/omarchy-plugin-sync --enable
+omarchy plugin add https://github.com/jacueblol/omarchy-sync-plugin --enable
 ```
 
 ### Set up the sync repo
 
 Open the panel and click **Set up sync repo**. A terminal opens and, after
 asking, creates a private `<your-github-user>/omarchy-sync` repo with the
-GitHub CLI (`gh`), then pushes this machine's plugins and layout to it.
+GitHub CLI (`gh`), then pushes this machine's plugins, bar layout, and
+keybindings to it.
 
 To use another name or host, enter it under **Settings › Sync repo** first
 (`owner/name` on GitHub, or any git URL you can push to, such as
@@ -44,9 +73,10 @@ drive). `gh` is only needed to create a GitHub repo for you.
 
 Install the plugin there, open the panel, and click **Set up sync repo**. It
 finds the existing repo and connects to it instead of creating one. Review
-**Settings** on that machine, then click **Pull**: the panel lists the
-plugins it will install or remove and the settings it will replace, and
-nothing happens until you confirm.
+**Settings** on that machine (for example, turn on **Mouse and keyboard
+input** if it should match), then click **Pull**: the panel lists the plugins
+it will install or remove, the settings it will replace, and the files it
+will change, and nothing happens until you confirm.
 
 ## Usage
 
@@ -56,10 +86,14 @@ push or pull.
 | State | Meaning |
 |---|---|
 | In sync | Everything this machine syncs matches the repo |
-| Changes to push | You changed plugins or the bar here |
+| Changes to push | You changed plugins, the bar, or a synced file here |
 | Changes to pull | Another machine shared changes |
 | Both changed | Each side changed since this machine last synced. Choose **Push** or **Pull** |
 | First sync here | This machine has never synced. Usually **Pull** |
+
+The panel lists each synced file (**synced**, **changed here**, **to pull**,
+or **changed on both**), then each plugin (**synced**, **only here**, **to
+install**, **this machine only**, or **not synced**).
 
 | Action | Mouse | Keyboard |
 |---|---|---|
@@ -77,6 +111,12 @@ omarchy-shell io.github.jacueblol.omarchy-sync settings
 omarchy-shell io.github.jacueblol.omarchy-sync sync    # does what the Automatic sync setting allows
 omarchy-shell io.github.jacueblol.omarchy-sync push
 omarchy-shell io.github.jacueblol.omarchy-sync pull    # applies without the confirmation step
+```
+
+The helper script can also be run directly; `status` prints JSON:
+
+```sh
+~/.config/omarchy/plugins/io.github.jacueblol.omarchy-sync/omarchy-sync status|push|pull|auto|init [repo]
 ```
 
 ## Configure
@@ -110,6 +150,8 @@ The same settings can be scripted:
 omarchy bar set io.github.jacueblol.omarchy-sync mode "Push and pull automatically"
 omarchy bar set io.github.jacueblol.omarchy-sync syncShellSettings true --json
 omarchy bar set io.github.jacueblol.omarchy-sync localOnly "omarchy.battery,acme.vpn"
+omarchy bar set io.github.jacueblol.omarchy-sync syncInput true --json
+omarchy bar set io.github.jacueblol.omarchy-sync extraFiles "hypr/looknfeel.lua,starship.toml"
 omarchy bar move io.github.jacueblol.omarchy-sync --section right
 ```
 

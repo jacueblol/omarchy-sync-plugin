@@ -5,7 +5,7 @@
   "version": "2.0.0",
   "author": "jacueblol",
   "license": "MIT",
-  "homepage": "https://github.com/jacueblol/omarchy-plugin-sync",
+  "homepage": "https://github.com/jacueblol/omarchy-sync-plugin",
   "description": "Keep your Omarchy plugins, bar layout, keybindings, and mouse settings the same on every machine through a private git repo you own. Choose what syncs and when, per machine. Works alongside Omaplug.",
   "kinds": [
     "bar-widget"
